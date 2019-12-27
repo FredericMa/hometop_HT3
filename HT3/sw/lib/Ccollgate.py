@@ -18,6 +18,10 @@
 #
 #################################################################
 # Ver:0.1    / Datum 15.06.2017 first release
+# Ver:0.2    / Datum 29.11.2018 __Extract_HT3_path_from_AbsPath() replaced with ht_utils
+#                               __Autocreate_draw() removed, db_rrdtool.create_draw() replacement
+# Ver:0.3    / Datum 03.12.2019 Issue:'Deprecated property InterCharTimeout #7'
+#                                port.setInterCharTimeout() removed
 #################################################################
 
 import sys
@@ -38,8 +42,8 @@ import ht_const
 
 __author__  = "junky-zs"
 __status__  = "draft"
-__version__ = "0.1"
-__date__    = "15.06.2017"
+__version__ = "0.3"
+__date__    = "03.12.2019"
 
 """
 #################################################################
@@ -482,7 +486,6 @@ class cht_if_worker(threading.Thread):
             #open serial port for reading HT-data
             try:
                 self.__port = serial.Serial(self.__serialdevice, self.__baudrate )
-                self.__port.setInterCharTimeout(0.1) #VTIME; set to 0.1*1sec
                 self.__data_input_mode="ASYNC"
             except:
                 errorstr="cht_if_worker();Error;couldn't open requested device:{0}".format(self.__serialdevice)
@@ -554,7 +557,7 @@ class cht_if_worker(threading.Thread):
             self._logging.critical(errorstr)
             self.__thread_run = False
             self.__port.close()
-            raise 
+            raise
 
         # set debug:=1 if you need debug-outputs on 'stdout'
         debug = 0
@@ -565,7 +568,7 @@ class cht_if_worker(threading.Thread):
             self._logging.critical(errorstr)
             self.__thread_run = False
             self.__port.close()
-            raise 
+            raise
 
         try:
             while self.__thread_run:
@@ -589,7 +592,7 @@ class cht_if_worker(threading.Thread):
             self._logging.critical(errorstr)
             self.__thread_run = False
             self.__port.close()
-            raise 
+            raise
 
         self._logging.info("cht_if_worker(); End ----------------------")
 
@@ -610,7 +613,7 @@ class ccollgate_cfg():
     IF_ht = 'ht'
     IF_mqtt = 'mqtt'
     IF_sps = 'sps'
-    
+
     def __init__(self, logger, loglevel=logging.INFO):
         self._logger = logger
         self.__configfilename = ""
@@ -760,35 +763,6 @@ class cstore2db(threading.Thread):
             rtnvalue = None
         return rtnvalue
 
-    def __Extract_HT3_path_from_AbsPath(self, inpath):
-        """extract the HT3 path from 'inpath' if available."""
-        rtnpath = os.path.normcase(inpath)
-        searchpath = os.path.normcase('HT3/sw')
-        # check path and remove 'HT3/..' if any entry is found
-        if searchpath in (rtnpath):
-            rtnpath = rtnpath[: rtnpath.rfind(searchpath)]
-        return os.path.abspath(rtnpath)
-
-    def __Autocreate_draw(self, path_2_db, path_2_draw, hc_count=1, start_time=None, stoptime=None):
-        """automatic calling the rrdtool-draw script if rrdtool-db is enabled."""
-        debugstr = "cstore2db.__Autocreate draw();\n path2db  :{0};\n path2draw:{1};\n hc_count:{2}".format(path_2_db, path_2_draw, hc_count)
-        self._logging.debug(debugstr)
-        AbsPathandFilename = os.path.abspath(os.path.normcase('./etc/rrdtool_draw.pl'))
-        Abspath2_db = self.__Extract_HT3_path_from_AbsPath(path_2_db)
-        Abspath_2_draw = self.__Extract_HT3_path_from_AbsPath(path_2_draw)
-
-        strsystemcmd = AbsPathandFilename + ' ' + Abspath2_db + ' ' + Abspath_2_draw + ' ' + str(hc_count)
-        self._logging.debug(strsystemcmd)
-        try:
-            #execute perl-script for drawing 'rrdtool' dbinfos
-            error = os.system(strsystemcmd)
-            if error:
-                errorstr = "cstore2db.__Autocreate_draw();Error:{0}; cmd:{1}".format(error, strsystemcmd)
-                self._logging.critical(errorstr)
-        except:
-            errorstr = "cstore2db.__Autocreate_draw();Error; os.system-call"
-            self._logging.critical(errorstr)
-
     def run(self):
         """worker thread for sqlite-db using 'threading.Thread'"""
         import sqlite3
@@ -810,7 +784,7 @@ class cstore2db(threading.Thread):
 
         if self._ht_if.ht_if_data().is_db_rrdtool_enabled():
             try:
-                rrdtooldb = db_rrdtool.cdb_rrdtool(self._cfg_file)
+                rrdtooldb = db_rrdtool.cdb_rrdtool(self._cfg_file, self._logging)
                 rrdtooldb.createdb_rrdtool()
                 # setup the first 'nextTimeStep' to 3 times stepseconds waiting for valid data
                 nextTimeStep = time.time() + int(self._ht_if.ht_if_data().db_rrdtool_stepseconds()) * 3
@@ -858,7 +832,10 @@ class cstore2db(threading.Thread):
                         # create draw calling script
                         (db_path, dbfilename) = self._ht_if.ht_if_data().db_rrdtool_filepathname()
                         (html_path, filename) = self._ht_if.ht_if_data().db_rrdtool_filepathname('.')
-                        self.__Autocreate_draw(db_path, html_path, self._ht_if.ht_if_data().heatercircuits_amount())
+                        rrdtooldb.create_draw(db_path, html_path,
+                                              self._ht_if.ht_if_data().heatercircuits_amount(),
+                                              self._ht_if.ht_if_data().controller_type_nr(),
+                                              self._ht_if.ht_if_data().GetAllMixerFlags())
 
                 if sqlite_autoerase:
                     self.__Autoerasing_sqlitedb(database)
@@ -1077,7 +1054,7 @@ if __name__ == "__main__":
     print("---------------+-------------+-------------------")
 ##
 #   for testpurposes
-#    print("if:{0};flag:{1};file:{2}".format(ccollgate_cfg.IF_ht, 
+#    print("if:{0};flag:{1};file:{2}".format(ccollgate_cfg.IF_ht,
 #                                            collgate.get_enable_flag(ccollgate_cfg.IF_ht),
 #                                            collgate.get_cfg_file(ccollgate_cfg.IF_ht)))
 ##
